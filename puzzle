@@ -1,0 +1,313 @@
+# title       : puzzle
+# description : slide puzzles of various sizes solver
+# authors     : Pavlo Opanasenko, Vitalii Levko
+# emails      : popanase@student.unit.ua, vlevko@student.unit.ua
+# date        : 20191111
+# version     : 0.1
+# usage       : ./puzzle
+
+
+import argparse
+import os
+import sys
+
+from popanase import npuzzle
+from vlevko import aida
+
+
+def _error(file, issue, num,  multi=True, msg='line'):
+    # print detailed error message for current puzzle board
+    scriptname = os.path.basename(__file__)
+    issue = issue.rstrip('\n')
+    print(f"{scriptname}: error: traceback:{' file `'+file.name+'`:' if multi else ''} {msg}{' '+str(num)+':' if num else ''} `{issue}`")
+
+
+def _directory(path):
+    # check that optional argument is a valid directory
+    if os.path.isdir(path):
+        return path
+    else:
+        raise argparse.ArgumentTypeError(f"readable directory: `{path}` is not a valid directory path")
+
+
+def _parse(file, multi=True, author='popanase', metric=1, search=1, inline=None):
+    n = -1 # initial n puzzle size for 0+ dimension(s) and error indicator if remains -1
+    puzzle = [] # current puzzle board in 2 dimensional list format
+
+    try:
+        for k, line in enumerate(file):
+            # check line by line in puzzle board
+            k += 1 # real line number indicator for error message(s)
+            row = [] # valid int number storage
+            arr = line.strip().split()
+
+            for item in arr:
+                # check whether it is an int number or a comment, or display an error otherwise
+                if item.isdigit():
+                    row.append(int(item))
+                elif item.startswith('#'):
+                    break
+                else:
+                    # wrong symbol occured ERR
+                    _error(file, line, k, multi)
+                    return
+
+            if row:
+                if n == -1 and len(row) != 1:
+                    # missed number of rows/cols ERR
+                    _error(file, line, k, multi)
+                    return
+                elif n == -1:
+                    # too small number of n
+                    if row[0] < 3:
+                        _error(file, line, k, multi)
+                        return
+                    # add number of rows/cols OK
+                    n = row[0]
+                elif n != -1 and n != len(row):
+                    # too many/not enough numbers in line ERR
+                    _error(file, line, k, multi)
+                    return
+                elif n != -1 and len(puzzle) == n:
+                    # extra row with numbers ERR
+                    _error(file, line, k, multi)
+                    return
+                else:
+                    # add row with numbers to puzzle OK
+                    puzzle.append(row)
+    except Exception:
+        if multi:
+            print(file.name+':')
+        _error(file, 'invalid file', 0, multi, 'unexpected')
+        return
+
+    if n != -1 and len(puzzle) != n:
+        # not enough rows with numbers in file ERR
+        _error(file, 'EOF', 0, multi, 'unexpected')
+        return
+    elif n == -1:
+        # no puzzle found in file at all KO
+        print(file.name+':')
+        return
+
+    # check for all numbers are correct, i.e. 
+    # from 1 to `n^2` with no duplicates or gaps
+    for num in range(n**2):
+        for row in puzzle:
+            if num in row:
+                break
+        if not num in row:
+            # ^ improve this block somehow not to check twice
+            _error(file, str(num), 0, multi, 'missing number')
+            return
+
+    # print parsed puzzle along with current filename(s) if multiple
+    if multi:
+        print(file.name+':')
+    if puzzle:
+        # ^ should just return parsed puzzle board instead or None in case of error
+        # adjust goal state(-s)
+        if inline is not None:
+            finish_puzzle = _goal_inline(n)
+        else:
+            finish_puzzle = _goal(len(puzzle))
+
+        if not npuzzle.can_solve(puzzle, finish_puzzle):
+            print("UNSOLVABLE")
+            return
+
+        if author == 'popanase':
+            npuzzle.npuzzle(puzzle, finish_puzzle, metric, search)
+        elif author == 'vlevko':
+            aida.a(puzzle, finish_puzzle, metric, search)
+        else:
+            aida.ida(puzzle, finish_puzzle, metric, search)
+
+
+def _goal(n):
+    square = n * n
+    finish_puzzle = [-1 for i in range(square)]
+    current = 1
+    row = 0
+    r_idx = 1
+    col = 0
+    c_idx = 0
+
+    while True:
+        finish_puzzle[row + col * n] = current
+        
+        if current == 0:
+            break
+        
+        current += 1
+
+        if row + r_idx == n or row + r_idx < 0 or (r_idx != 0 and finish_puzzle[row + r_idx + col * n] != -1):
+            c_idx = r_idx
+            r_idx = 0
+        elif col + c_idx == n or col + c_idx < 0 or (c_idx != 0 and finish_puzzle[row + (col+c_idx) * n] != -1):
+            r_idx = -c_idx
+            c_idx = 0
+
+        row += r_idx
+        col += c_idx
+        
+        if current == square:
+            current = 0
+
+    goal = [finish_puzzle[i:i+n] for i in range(0, square, n)]
+
+    return goal
+
+
+def _goal_inline(n):
+    goal = [[y + 1 + x * n for y in range(n)] for x in range(n)]
+    goal[-1][-1] = 0
+    return goal
+
+
+def _main():
+    # parse arguments
+    parser = argparse.ArgumentParser(
+        description='Slide puzzles of various sizes solver')
+    parser.add_argument(
+        'file', 
+        nargs='*',
+        default=[sys.stdin],
+        type=argparse.FileType(), 
+        help='one or more input files with well formatted puzzle board; <stdin> by default')
+    parser.add_argument(
+        '-p', '--path', 
+        type=_directory,
+        help='directory path with input files')
+    parser.add_argument(
+        '-i', '--interactive',
+        action='store_true',
+        help='write puzzle board using <stdin>')
+    parser.add_argument(
+        '-a', '--author',
+        help='select algorithm implementation by author; "vlevko" by default')
+    parser.add_argument(
+        '-ida',
+        action='store_true',
+        help='select iterative deepening A* algorithm; force author to "vlevko"; force search type to 1')
+    parser.add_argument(
+        '-m', '--metric',
+        type=int,
+        default=1,
+        choices=range(1, 7),
+        metavar='NUMBER',
+        help='select metric: 1 - Manhattan Distance, 2 - Euclidean Distance, 3 - Chebyshev Distance, 4 - Minkowski Distance, 5 - Hamming Distance, 6 - Canberra Distance; 1 by default')
+    parser.add_argument(
+        '-s', '--search',
+        type=int,
+        default=1,
+        choices=range(1, 4),
+        metavar='NUMBER',
+        help='select search type: 1 - standard, 2 - greedy, 3 - uniform-cost; 1 by default')
+    parser.add_argument(
+        '-inline',
+        action='store_true',
+        help='select inline solution; snail by default')
+    args = parser.parse_args()
+    scriptname = os.path.basename(__file__)
+    dir_files = []
+    
+    # handle author option
+    if args.author:
+        if args.author == 'popanase':
+            author = 'popanase'
+        elif args.author == 'vlevko':
+            author = 'vlevko'
+        else:
+            print(f'usage: {scriptname} [-h] [-p PATH] [-i] [-a AUTHOR] [-ida] [-m NUMBER] [-s NUMBER] [-inline] [file [file ...]]')
+            print(f"{scriptname}: error: author name: didn't find author `{args.author}`")
+            sys.exit()
+    else:
+        author = 'vlevko'
+
+    # handle ida option, handle search option
+    if args.ida:
+        author = 'ida'
+        search = 1
+    else:
+        search = args.search
+
+    # handle metric option
+    metric = args.metric
+
+    # handle inline option
+    if args.inline:
+        inline = True
+    else:
+        inline = None
+
+    if args.path:
+        # handle files in the given directory
+        if args.path.startswith('/') or args.path.startswith('\\'):
+            dir_path = args.path
+        else:
+            script_dir = os.path.dirname(__file__)
+            dir_path = os.path.join(script_dir, args.path)
+        
+        for filename in os.listdir(args.path):
+            file_path = os.path.join(dir_path, filename)
+            
+            if os.path.isdir(file_path):
+                # handle error of the inner directory(-ies)
+                print(f'usage: {scriptname} [-h] [-p PATH] [-i] [-a AUTHOR] [-ida] [-m NUMBER] [-s NUMBER] [-inline] [file [file ...]]')
+                print(f"{scriptname}: error: argument file: can't open `{filename}` in `{args.path}`")
+                for f in dir_files:
+                    f.close()
+                sys.exit()
+            
+            try:
+                # handle unaccessible file(s) permission
+                fp = open(file_path, 'r')
+            except:
+                print(f'usage: {scriptname} [-h] [-p PATH] [-i] [-a AUTHOR] [-ida] [-m NUMBER] [-s NUMBER] [-inline] [file [file ...]]')
+                print(f"{scriptname}: error: argument file: can't open `{filename}` in `{args.path}`:", sys.exc_info()[0])
+                for f in dir_files:
+                    f.close()
+                sys.exit()
+
+            dir_files.append(fp)
+
+    # read and parse input file(s)
+    files = args.file
+    names = list(set([f.name for f in files] + [df.name for df in dir_files])) # filtered filenames for duplicates
+    # ^ can be refactored with adding `filename` to names erlier and just concatenated here
+    
+    if args.interactive:
+        # handle default <stdin> along with optional one
+        if '<stdin>' in names:
+            pass
+        else:
+            fp = sys.stdin # should it be wrapped into try/except block?
+            names.insert(0, fp.name)
+            files.insert(0, fp)
+    
+    unique = [] # empty list for already iterated files
+    count = len(names) # real number of files to parse
+    files = files + dir_files
+
+    # print(files)
+    # sys.exit()
+
+    for file in files:
+        if file.name in unique:
+            # skip if already iterated through file
+            file.close() # what if double <stdin> occured, do they have distinct or the same one reference?
+            continue
+        else:
+            unique.append(file.name)
+        
+        _parse(file, True if len(names) > 1 else False, author, metric, search, inline)
+        file.close()
+        count -= 1
+        
+        if count > 0:
+            print()
+
+
+if __name__ == '__main__':
+    _main() 
